@@ -26,6 +26,10 @@
 
 ## Updates
 
+- [May 15, 2026] We fixed an implementation issue that was keeping redundant intermediate tensors in memory. With the same GPU memory budget, VGGT can now run on roughly 2-3x more input frames! See [VGGT-Omega](https://vggt-omega.github.io/) for more details.
+
+
+
 - [July 29, 2025] We've updated the license for VGGT to permit **commercial use** (excluding military applications). All code in this repository is now under a commercial-use-friendly license. However, only the newly released checkpoint [**VGGT-1B-Commercial**](https://huggingface.co/facebook/VGGT-1B-Commercial) is licensed for commercial usage — the original checkpoint remains non-commercial. Full license details are available [here](https://github.com/facebookresearch/vggt/blob/main/LICENSE.txt). Access to the checkpoint requires completing an application form, which is processed by a system similar to LLaMA's approval workflow, automatically. The new checkpoint delivers similar performance to the original model. Please submit an issue if you notice a significant performance discrepancy.
 
 
@@ -187,9 +191,9 @@ python demo_colmap.py --scene_dir=/YOUR/SCENE_DIR/
 # With bundle adjustment
 python demo_colmap.py --scene_dir=/YOUR/SCENE_DIR/ --use_ba
 
-# Run with bundle adjustment using reduced parameters for faster processing
+# Run with bundle adjustment using reduced parameters
 # Reduces max_query_pts from 4096 (default) to 2048 and query_frame_num from 8 (default) to 5
-# Trade-off: Faster execution but potentially less robust reconstruction in complex scenes (you may consider setting query_frame_num equal to your total number of images) 
+# Trade-off: Potentially less robust reconstruction in complex scenes (you may consider setting query_frame_num equal to your total number of images) 
 # See demo_colmap.py for additional bundle adjustment configuration options
 python demo_colmap.py --scene_dir=/YOUR/SCENE_DIR/ --use_ba --max_query_pts=2048 --query_frame_num=5
 ```
@@ -226,20 +230,6 @@ Our model shows surprisingly good performance on single-view reconstruction, alt
 
 
 We did not quantitatively test monocular depth estimation performance ourselves, but [@kabouzeid](https://github.com/kabouzeid) generously provided a comparison of VGGT to recent methods [here](https://github.com/facebookresearch/vggt/issues/36). VGGT shows competitive or better results compared to state-of-the-art monocular approaches such as DepthAnything v2 or MoGe, despite never being explicitly trained for single-view tasks. 
-
-
-
-## Runtime and GPU Memory
-
-We benchmark the runtime and GPU memory usage of VGGT's aggregator on a single NVIDIA H100 GPU across various input sizes. 
-
-| **Input Frames** | 1 | 2 | 4 | 8 | 10 | 20 | 50 | 100 | 200 |
-|:----------------:|:-:|:-:|:-:|:-:|:--:|:--:|:--:|:---:|:---:|
-| **Time (s)**     | 0.04 | 0.05 | 0.07 | 0.11 | 0.14 | 0.31 | 1.04 | 3.12 | 8.75 |
-| **Memory (GB)**  | 1.88 | 2.07 | 2.45 | 3.23 | 3.63 | 5.58 | 11.41 | 21.15 | 40.63 |
-
-Note that these results were obtained using Flash Attention 3, which is faster than the default Flash Attention 2 implementation while maintaining almost the same memory usage. Feel free to compile Flash Attention 3 from source to get better performance.
-
 
 ## Research Progression
 
