@@ -26,6 +26,9 @@
 
 ## Updates
 
+- [May 18, 2026] The next step of VGGT — **VGGT-Omega** — has been released! Check it out at [https://vggt-omega.github.io/](https://vggt-omega.github.io/).
+
+
 - [May 15, 2026] We fixed an implementation issue that was keeping redundant intermediate tensors in memory. With the same GPU memory budget, VGGT can now run on roughly 2-3x more input frames! See [VGGT-Omega](https://vggt-omega.github.io/) for more details.
 
 
