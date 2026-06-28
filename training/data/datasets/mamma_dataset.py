@@ -650,6 +650,16 @@ class MammaDataset:
                 break
         if not selected_views:
             raise KeyError(f"Person {pid} not present in any view for frame {sample['frame']}")
+        # Pad to EXACTLY img_per_seq views by duplicating available ones. Some persons
+        # appear in <img_per_seq cameras; without padding those samples return fewer
+        # views and default_collate fails to stack a batch ("tensors must be equal size").
+        # The model is view-count agnostic, but a batch needs a uniform view count.
+        if len(selected_views) < img_per_seq:
+            base = list(selected_views)
+            k = 0
+            while len(selected_views) < img_per_seq:
+                selected_views.append(base[k % len(base)])
+                k += 1
         ids = np.asarray([view_names.index(v) for v in selected_views], dtype=np.int64)
 
         final_image_shape = self.get_target_shape(aspect_ratio)

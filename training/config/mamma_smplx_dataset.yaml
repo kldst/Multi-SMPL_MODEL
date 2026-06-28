@@ -13,11 +13,11 @@ exp_name: mamma_smplx_mv34
 img_size: 518
 patch_size: 14
 num_workers: 0
-max_img_per_gpu: 30            # 30//4 = 7 samples/GPU (28 imgs used); 3 GPU -> 21 samples/step
+max_img_per_gpu: 40            # 40//4 = 10 samples/GPU (no waste); 3 GPU -> 30 samples/step
 max_epochs: 100
 val_epoch_freq: 2
-limit_train_batches: 51       # ~1 pass/epoch: 1062 samples / 21 per step ≈ 51
-limit_val_batches: 10         # covers 192 test samples: ceil(192/21) ≈ 10
+limit_train_batches: 35       # ~1 pass/epoch: 1062 samples / 30 per step ≈ 35
+limit_val_batches: 7          # covers 192 test samples: ceil(192/30) ≈ 7
 
 data:
   train:
