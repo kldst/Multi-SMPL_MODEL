@@ -633,7 +633,10 @@ class MammaDataset:
             order = list(range(len(view_names)))
             if self.training:
                 random.shuffle(order)
-        selected_views, person_cache = [], {}
+        # person_cache[vn]: the TARGET person dict, or None if the person is absent in
+        # that view. cam_cache[vn]: a person dict to read the (shared) view camera from.
+        selected_views, person_cache, cam_cache = [], {}, {}
+        # pass 1: views where the target person is present (informative views)
         for i in order:
             vn = view_names[int(i)]
             dp = osp.join(sample["seq_dir"], vn, f"{sample['frame']}.data.pyd")
@@ -642,18 +645,35 @@ class MammaDataset:
             except Exception:
                 continue
             pr = ppl.get(pid, ppl.get(str(pid)))
-            if pr is None:
-                continue
-            selected_views.append(vn)
-            person_cache[vn] = pr
-            if len(selected_views) >= img_per_seq:
-                break
+            if pr is not None:
+                selected_views.append(vn)
+                person_cache[vn] = pr
+                cam_cache[vn] = pr
+                if len(selected_views) >= img_per_seq:
+                    break
         if not selected_views:
             raise KeyError(f"Person {pid} not present in any view for frame {sample['frame']}")
-        # Pad to EXACTLY img_per_seq views by duplicating available ones. Some persons
-        # appear in <img_per_seq cameras; without padding those samples return fewer
-        # views and default_collate fails to stack a batch ("tensors must be equal size").
-        # The model is view-count agnostic, but a batch needs a uniform view count.
+        # pass 2: if still short, fill with views where the person is ABSENT. They keep
+        # their real image + camera but get an EMPTY (all-zero) mask + zero-weight
+        # landmarks, so the model learns to ignore views without the target person.
+        if len(selected_views) < img_per_seq:
+            for i in order:
+                vn = view_names[int(i)]
+                if vn in person_cache:
+                    continue
+                dp = osp.join(sample["seq_dir"], vn, f"{sample['frame']}.data.pyd")
+                try:
+                    ppl = load_pickle(dp)
+                except Exception:
+                    continue
+                if len(ppl) == 0:
+                    continue
+                selected_views.append(vn)
+                person_cache[vn] = None
+                cam_cache[vn] = next(iter(ppl.values()))   # any person -> view camera
+                if len(selected_views) >= img_per_seq:
+                    break
+        # last resort: frame has fewer than img_per_seq views total -> duplicate
         if len(selected_views) < img_per_seq:
             base = list(selected_views)
             k = 0
@@ -694,24 +714,27 @@ class MammaDataset:
             image = read_image_pil(image_path)
             if image is None:
                 raise FileNotFoundError(f"Could not read image: {image_path}")
-            person = person_cache[view_name]
-            if first_person is None:
+            person = person_cache[view_name]          # target person dict, or None if absent
+            cam_person = cam_cache[view_name]          # dict to read the view camera from
+            if person is not None and first_person is None:
                 first_person = person
 
             original_h, original_w = image.shape[:2]
-            K = np.asarray(person["cam_int"], dtype=np.float32).reshape(3, 3)
-            extri = np.asarray(person["cam_ext"], dtype=np.float32)
-            vertices_2d = np.asarray(person["vertices2d"], dtype=np.float32)
-            visibility = np.asarray(
-                person.get("vertex_visibility", np.ones((len(vertices_2d), 1), dtype=np.float32))
-            ).reshape(-1) > 0
-
-            if self.landmark_indices is None:
-                ldmk_indices = np.arange(min(self.num_landmarks, len(vertices_2d)), dtype=np.int64)
+            K = np.asarray(cam_person["cam_int"], dtype=np.float32).reshape(3, 3)
+            extri = np.asarray(cam_person["cam_ext"], dtype=np.float32)
+            if person is not None:
+                vertices_2d = np.asarray(person["vertices2d"], dtype=np.float32)
+                visibility = np.asarray(
+                    person.get("vertex_visibility", np.ones((len(vertices_2d), 1), dtype=np.float32))
+                ).reshape(-1) > 0
+                if self.landmark_indices is None:
+                    ldmk_indices = np.arange(min(self.num_landmarks, len(vertices_2d)), dtype=np.int64)
+                else:
+                    ldmk_indices = self.landmark_indices[self.landmark_indices < len(vertices_2d)]
+                ldmks = vertices_2d[ldmk_indices]
+                landmark_visibility = visibility[ldmk_indices].astype(np.float32)
             else:
-                ldmk_indices = self.landmark_indices[self.landmark_indices < len(vertices_2d)]
-            ldmks = vertices_2d[ldmk_indices]
-            landmark_visibility = visibility[ldmk_indices].astype(np.float32)
+                vertices_2d = visibility = ldmks = landmark_visibility = None
 
             if self.full_scene:
                 # ---- Full-scene letterbox path (target-person mask, no per-person crop) ----
@@ -723,24 +746,29 @@ class MammaDataset:
                     original_h, original_w, final_h, final_w
                 )
                 crop_img = self._warp_image(image, new_h, new_w, pad_x, pad_y, final_h, final_w)
-
-                scene_mask = self._load_scene_person_mask(
-                    view_dir, sample["frame"], sample["person_id"], original_h, original_w
-                )
-                if scene_mask is None:
-                    # fallback: convex hull of visible projected vertices in full image
-                    scene_mask = self._mask_from_landmarks(
-                        vertices_2d[visibility], original_h, original_w
-                    ) > 0
-                crop_mask = self._warp_binary_mask(
-                    scene_mask, new_h, new_w, pad_x, pad_y, final_h, final_w
-                )
-
                 crop_K = (affine_to_homogeneous(ltrans) @ K).astype(np.float32)
-                ldmks_t = transform_points2d(ldmks, ltrans)
-                crop_ldmks, crop_weights = self._format_landmarks(ldmks_t, final_w, final_h)
-                count = min(len(landmark_visibility), self.num_landmarks)
-                crop_weights[:count, 0] *= landmark_visibility[:count]
+
+                if person is not None:
+                    scene_mask = self._load_scene_person_mask(
+                        view_dir, sample["frame"], sample["person_id"], original_h, original_w
+                    )
+                    if scene_mask is None:
+                        # fallback: convex hull of visible projected vertices in full image
+                        scene_mask = self._mask_from_landmarks(
+                            vertices_2d[visibility], original_h, original_w
+                        ) > 0
+                    crop_mask = self._warp_binary_mask(
+                        scene_mask, new_h, new_w, pad_x, pad_y, final_h, final_w
+                    )
+                    ldmks_t = transform_points2d(ldmks, ltrans)
+                    crop_ldmks, crop_weights = self._format_landmarks(ldmks_t, final_w, final_h)
+                    count = min(len(landmark_visibility), self.num_landmarks)
+                    crop_weights[:count, 0] *= landmark_visibility[:count]
+                else:
+                    # target person absent in this view -> EMPTY mask + zero-weight landmarks
+                    crop_mask = np.zeros((final_h, final_w), dtype=np.float32)
+                    crop_ldmks = np.zeros((self.num_landmarks, 2), dtype=np.float32)
+                    crop_weights = np.zeros((self.num_landmarks, 1), dtype=np.float32)
 
                 final_trans = ltrans.astype(np.float32)
                 pad_offset = np.array([pad_x, pad_y], dtype=np.float32)
@@ -752,6 +780,9 @@ class MammaDataset:
                 vh, vw = final_h, final_w
             else:
                 # ---- Legacy per-person crop path ----
+                if person is None:
+                    raise RuntimeError(
+                        "legacy crop path does not support person-absent views; use full_scene=True")
                 center = np.asarray(person["center"], dtype=np.float32)
                 mamma_scale = float(person["scale"]) / 1.2 * float(self.crop_scale)
                 scale = np.array([mamma_scale, mamma_scale], dtype=np.float32)
