@@ -144,6 +144,41 @@ class ComposedDataset(Dataset, ABC):
             "point_masks": point_masks,
         }
 
+        optional_float_keys = (
+            "person_masks",
+            "full_intrinsics",
+            "full_extrinsics",
+            "crop_transforms",
+            "crop_bboxes",
+            "landmarks_512",
+            "landmarks_512_weights",
+            "smplx_pose",
+            "smplx_betas",
+            "smplx_trans",
+        )
+        optional_long_keys = ("person_id", "smplx_frame_id", "original_sizes")
+        optional_passthrough_keys = ("camera_names", "image_paths", "smplx_gender")
+
+        for key in optional_float_keys:
+            if key not in batch:
+                continue
+            value = batch[key]
+            if isinstance(value, list):
+                value = np.stack(value)
+            sample[key] = torch.from_numpy(np.asarray(value).astype(np.float32))
+
+        for key in optional_long_keys:
+            if key not in batch:
+                continue
+            value = batch[key]
+            if isinstance(value, list):
+                value = np.stack(value)
+            sample[key] = torch.as_tensor(value, dtype=torch.long)
+
+        for key in optional_passthrough_keys:
+            if key in batch:
+                sample[key] = batch[key]
+
         # --- Track Processing (if enabled) ---
         if self.load_track:
             if batch["tracks"] is not None:

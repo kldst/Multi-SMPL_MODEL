@@ -1,0 +1,126 @@
+defaults:
+  - default_smplx.yaml
+
+exp_name: mamma_smplx_mv34
+img_size: 518
+patch_size: 14
+num_workers: 4
+max_img_per_gpu: 4            # 1 multi-view sample (4 views) per batch on a 16GB GPU
+max_epochs: 100
+val_epoch_freq: 2            # run validation every 2 epochs
+# one epoch ~= one pass over the train split (1062 (seq,frame,person) samples, batch=1).
+# inside_random=True draws samples randomly, so this is the #iters per epoch, not exact coverage.
+limit_train_batches: 1062
+limit_val_batches: 192       # = number of test samples (covers the held-out split once)
+
+data:
+  train:
+    _target_: data.dynamic_dataloader.DynamicTorchDataset
+    num_workers: ${num_workers}
+    max_img_per_gpu: ${max_img_per_gpu}
+    shuffle: True
+    pin_memory: False
+    common_config:
+      fix_img_num: 4
+      fix_aspect_ratio: 1.0
+      load_track: False
+      track_num: 1024
+      training: True
+      inside_random: True
+      img_size: ${img_size}
+      patch_size: ${patch_size}
+      rescale: False
+      rescale_aug: False
+      landscape_check: False
+      debug: False
+      get_nearby: False
+      load_depth: False
+      img_nums: [4, 4]
+      max_img_per_gpu: ${max_img_per_gpu}
+      allow_duplicate_img: False
+      repeat_batch: False
+      augs:
+        cojitter: True
+        cojitter_ratio: 0.3
+        scales: null
+        aspects: [1.0, 1.0]
+        color_jitter:
+          brightness: 0.2
+          contrast: 0.2
+          saturation: 0.2
+          hue: 0.05
+          p: 0.5
+        gray_scale: False
+        gau_blur: False
+    dataset:
+      _target_: data.composed_dataset.ComposedDataset
+      dataset_configs:
+        - _target_: data.datasets.mamma_dataset.MammaDataset
+          split: train
+          MAMMA_DIR: /mnt/train-data-4-hdd/yian/Mamma_mv_split/train
+          downsampled_verts_path: /mnt/train-data-4-hdd/yian/yian_vggt_smpl/data/body_models/downsampled_verts/verts_512.pkl
+          min_num_views: 4
+          person_id: 0
+          frame_id: 0
+          crop_scale: 1.0
+          mamma_crop_width: 384
+          mamma_crop_height: 512
+          pad_to_square: True
+          mask_from_landmarks: True
+          num_landmarks: 512
+          full_scene: True
+          len_train: 100000
+  val:
+    _target_: data.dynamic_dataloader.DynamicTorchDataset
+    num_workers: ${num_workers}
+    max_img_per_gpu: ${max_img_per_gpu}
+    shuffle: False
+    pin_memory: False
+    common_config:
+      fix_img_num: 4
+      fix_aspect_ratio: 1.0
+      load_track: False
+      track_num: 1024
+      training: False
+      inside_random: False
+      img_size: ${img_size}
+      patch_size: ${patch_size}
+      rescale: False
+      rescale_aug: False
+      landscape_check: False
+      debug: False
+      get_nearby: False
+      load_depth: False
+      img_nums: [4, 4]
+      max_img_per_gpu: ${max_img_per_gpu}
+      allow_duplicate_img: False
+      repeat_batch: False
+      augs:
+        cojitter: False
+        cojitter_ratio: 0.5
+        scales: null
+        aspects: [1.0, 1.0]
+        color_jitter: null
+        gray_scale: False
+        gau_blur: False
+    dataset:
+      _target_: data.composed_dataset.ComposedDataset
+      dataset_configs:
+        - _target_: data.datasets.mamma_dataset.MammaDataset
+          split: test
+          MAMMA_DIR: /mnt/train-data-4-hdd/yian/Mamma_mv_split/test
+          downsampled_verts_path: /mnt/train-data-4-hdd/yian/yian_vggt_smpl/data/body_models/downsampled_verts/verts_512.pkl
+          min_num_views: 4
+          person_id: 0
+          frame_id: 0
+          crop_scale: 1.0
+          mamma_crop_width: 384
+          mamma_crop_height: 512
+          pad_to_square: True
+          mask_from_landmarks: True
+          num_landmarks: 512
+          full_scene: True
+          len_test: 10000
+
+# model / loss / optim / logging / checkpoint are all inherited from default_smplx.yaml.
+# Override here only if this experiment needs different values.

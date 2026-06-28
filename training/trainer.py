@@ -210,10 +210,11 @@ class Trainer:
         if self.rank == 0:
             logging.info(f"Model state loaded. Missing keys: {missing or 'None'}. Unexpected keys: {unexpected or 'None'}.")
 
-        # Load optimizer state if available and in training mode
-        if "optimizer" in checkpoint:
+        # Load optimizer state if available and in training mode.
+        # self.optims is a LIST of OptimizerWrapper (construct_optimizers returns [wrapper]).
+        if "optimizer" in checkpoint and self.optims is not None:
             logging.info(f"Loading optimizer state dict (rank {self.rank})")
-            self.optims.optimizer.load_state_dict(checkpoint["optimizer"])
+            self.optims[0].optimizer.load_state_dict(checkpoint["optimizer"])
 
         # Load training progress
         if "epoch" in checkpoint:
@@ -713,10 +714,18 @@ class Trainer:
         
         return batch
 
-    def _process_batch(self, batch: Mapping):      
+    def _process_batch(self, batch: Mapping):
         if self.data_conf.train.common_config.repeat_batch:
             batch = self._apply_batch_repetition(batch)
-        
+
+        # Camera/point gauge normalization is only meaningful with dense-geometry GT
+        # (depth / world points). The SMPL-X task has none (point_masks all False) and
+        # uses RAW world cameras, so skip normalization entirely there — this keeps
+        # batch["extrinsics"]/full_extrinsics un-normalised for the SMPL-X path.
+        pm = batch.get("point_masks", None)
+        if pm is None or pm.sum() == 0:
+            return batch
+
         # Normalize camera extrinsics and points. The function returns new tensors.
         normalized_extrinsics, normalized_cam_points, normalized_world_points, normalized_depths = \
             normalize_camera_extrinsics_and_points_batch(
@@ -742,9 +751,16 @@ class Trainer:
         Returns:
             A dictionary containing the computed losses.
         """
-        # Forward pass
-        y_hat = model(images=batch["images"])
-        
+        # Forward pass. The SMPL-X model additionally needs the target-person mask and
+        # the RAW (un-normalised) cameras; pass them only when present so the vanilla
+        # VGGT path (images-only) is unchanged.
+        fwd = {"images": batch["images"]}
+        if "person_masks" in batch:
+            fwd["person_masks"] = batch["person_masks"]
+            fwd["gt_extrinsics"] = batch.get("full_extrinsics", batch["extrinsics"])
+            fwd["gt_intrinsics"] = batch["intrinsics"]
+        y_hat = model(**fwd)
+
         # Loss computation
         loss_dict = self.loss(y_hat, batch)
         
