@@ -14,7 +14,7 @@ img_size: 518
 patch_size: 14
 num_workers: 0
 max_img_per_gpu: 40            # 40//4 = 10 samples/GPU (no waste); 3 GPU -> 30 samples/step
-max_epochs: 100
+max_epochs: 500
 val_epoch_freq: 2
 limit_train_batches: 35       # ~1 pass/epoch: 1062 samples / 30 per step ≈ 35
 limit_val_batches: 7          # covers 192 test samples: ceil(192/30) ≈ 7
