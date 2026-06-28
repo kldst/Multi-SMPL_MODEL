@@ -149,6 +149,5 @@ skyseg.onnx
 *.egg-info
 
 /debug
-/data/weights
-/data/mamma_example
+/data/
 /training/logs
