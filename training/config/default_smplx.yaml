@@ -81,7 +81,7 @@ optim:
             - _target_: fvcore.common.param_scheduler.CosineParamScheduler
               start_value: 1.0e-4
               end_value: 1.0e-8
-          lengths: [0.05, 0.95]
+          lengths: [0.01, 0.99]
           interval_scaling: ['rescaled', 'rescaled']
     weight_decay:
       - scheduler:
