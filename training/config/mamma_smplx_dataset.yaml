@@ -13,11 +13,11 @@ exp_name: mamma_smplx_mv34
 img_size: 518
 patch_size: 14
 num_workers: 0
-max_img_per_gpu: 4            # 1 multi-view sample (4 views) per batch on a 16GB GPU
+max_img_per_gpu: 30            # 30//4 = 7 samples/GPU (28 imgs used); 3 GPU -> 21 samples/step
 max_epochs: 100
 val_epoch_freq: 2
-limit_train_batches: 1062     # ~= one pass over the train split (1062 (seq,frame,person) samples)
-limit_val_batches: 192        # = number of test samples (covers the held-out split once)
+limit_train_batches: 51       # ~1 pass/epoch: 1062 samples / 21 per step ≈ 51
+limit_val_batches: 10         # covers 192 test samples: ceil(192/21) ≈ 10
 
 data:
   train:
