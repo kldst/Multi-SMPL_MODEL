@@ -20,7 +20,7 @@ from hydra import initialize, compose
 from omegaconf import DictConfig, OmegaConf
 from trainer import Trainer
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 def main():
     parser = argparse.ArgumentParser(description="Train model with configurable YAML file")
