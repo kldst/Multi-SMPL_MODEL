@@ -107,10 +107,11 @@ class VGGTSMPLX(nn.Module):
 class SMPLXMultitaskLoss(nn.Module):
     def __init__(self, w_smplx=1.0, w_landmark=1.0, w_vis=0.1, w_camera=1.0,
                  w_pose=1.0, w_beta=0.1, w_trans=1.0, w_joints3d=1.0, w_vertices=1.0,
-                 **kwargs):
+                 smplx_model_root=None, **kwargs):
         super().__init__()
         # **kwargs swallows stray keys merged from default.yaml (camera, depth, ...).
         self.w = dict(smplx=w_smplx, landmark=w_landmark, vis=w_vis, camera=w_camera)
+        self.smplx_model_root = smplx_model_root   # None -> use smplx_utils default / SMPLX_MODEL_ROOT env
         self.smplx_w = dict(w_pose=w_pose, w_beta=w_beta, w_trans=w_trans,
                             w_joints3d=w_joints3d, w_vertices=w_vertices)
 
@@ -136,7 +137,10 @@ class SMPLXMultitaskLoss(nn.Module):
         gp = split_pose165(batch["smplx_pose"].to(dev))
         gt_dict = dict(global_orient=gp["global_orient"], body_pose=gp["body_pose"],
                        betas=batch["smplx_betas"].to(dev), transl=batch["smplx_trans"].to(dev))
-        Lsmplx = smplx_param_loss(pred_dict, gt_dict, genders=genders, **self.smplx_w)
+        smplx_kw = dict(self.smplx_w)
+        if self.smplx_model_root:
+            smplx_kw["model_root"] = self.smplx_model_root
+        Lsmplx = smplx_param_loss(pred_dict, gt_dict, genders=genders, **smplx_kw)
 
         # --- aux dense landmark (GNLL, normalised) + visibility BCE ---
         B, S = pred["dense_joints2d"].shape[:2]
