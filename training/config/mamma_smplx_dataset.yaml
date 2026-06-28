@@ -130,7 +130,7 @@ data:
 
 # ---- path overrides for the /dataset platform ----
 model:
-  pretrained_path: /dataset/model.pt              # VGGT-1B weights (local file)
+  pretrained_path: /dataset/vggt/model.pt              # VGGT-1B weights (local file)
 
 loss:
   smplx_model_root: /dataset/body_models/smplx_locked_head   # SMPL-X .npz models
