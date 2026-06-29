@@ -9,7 +9,7 @@
 defaults:
   - default_smplx.yaml
 
-exp_name: mamma_smplx_mv34_restpose_ief3
+exp_name: mamma_smplx_mv34_meanpose_ief3
 img_size: 518
 patch_size: 14
 num_workers: 0

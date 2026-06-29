@@ -28,6 +28,7 @@ from smplx_utils import decode_smplx, smplx_param_loss, rotation_6d_to_axis_angl
 class VGGTSMPLX(nn.Module):
     def __init__(self, img_size=518, patch_size=14, embed_dim=1024, d_model=512,
                  n_landmarks=512, num_betas=16, num_body_joints=21, reg_num_iter=3,
+                 reg_mean_params=None,
                  mask_zero_init=False, load_pretrained=True, freeze_encoder=True,
                  pretrained_path=None,
                  pretrained_repo="facebook/VGGT-1B", pretrained_file="model.pt", **kwargs):
@@ -48,8 +49,14 @@ class VGGTSMPLX(nn.Module):
         self.view_enc = SMPLViewEncoder(self.token_dim, d_model=d_model, grid=self.grid)
         self.cam_emb = CameraPoseEmbedding(d_model=d_model, img_size=img_size)
         self.ref_fusion = ReferenceFusion(d_model=d_model)
+        # mean-pose init: explicit config path, else repo-relative default smplx_model/smpl_mean_params.npz
+        if reg_mean_params is None:
+            cand = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "smplx_model", "smpl_mean_params.npz")
+            reg_mean_params = cand if os.path.isfile(cand) else None
         self.reg_head = SMPLXRegressionHead(d_model=d_model, num_body_joints=num_body_joints,
-                                            num_betas=num_betas, num_iter=reg_num_iter)
+                                            num_betas=num_betas, num_iter=reg_num_iter,
+                                            mean_params_path=reg_mean_params)
 
         if load_pretrained:
             # Priority: explicit local pretrained_path -> HF cache -> download from HF.

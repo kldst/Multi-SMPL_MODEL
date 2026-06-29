@@ -29,6 +29,9 @@ model:
   num_betas: 16
   num_body_joints: 21
   reg_num_iter: 3             # IEF iterations in the SMPL-X head (1 = single-shot)
+  # IEF init pose. null -> auto-use repo smplx_model/smpl_mean_params.npz (mean pose,
+  # HMR2/TRAM-style); set to an absolute path on other platforms, or "" to force REST pose.
+  reg_mean_params: null
   load_pretrained: True       # load VGGT-1B weights into the encoder
   # Where to get the VGGT-1B weights. Priority: pretrained_path -> HF cache -> HF download.
   # On a new/offline platform, copy model.pt over and set its absolute path here.

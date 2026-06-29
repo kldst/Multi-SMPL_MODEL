@@ -163,7 +163,9 @@ def axis_angle_to_matrix(aa: torch.Tensor) -> torch.Tensor:
     squeeze = aa.shape[-1] == 3
     J = aa.shape[-1] // 3
     a = aa.reshape(*aa.shape[:-1], J, 3)
-    theta = a.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+    # sqrt(sumsq + eps), NOT norm(): norm()'s gradient is 0/0 = nan at a==0 (rest pose),
+    # which makes Grad/ = nan when the head starts at identity rotations.
+    theta = torch.sqrt((a * a).sum(-1, keepdim=True) + 1e-12)
     k = a / theta
     kx, ky, kz = k[..., 0], k[..., 1], k[..., 2]
     zero = torch.zeros_like(kx)
@@ -213,13 +215,14 @@ def matrix_to_axis_angle(R: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
             q[ci, 1 + b] = (R[ci, b, a] + R[ci, a, b]) / s
             q[ci, 1 + cc] = (R[ci, cc, a] + R[ci, a, cc]) / s
     q = q / q.norm(dim=-1, keepdim=True).clamp(min=eps)
-    w = q[:, 0].clamp(-1, 1)
-    angle = 2 * torch.acos(w)
-    sin_half = torch.sqrt((1 - w * w).clamp(min=0))
-    small = sin_half < 1e-6
-    axis = q[:, 1:] / torch.where(small, torch.ones_like(sin_half), sin_half).unsqueeze(-1)
+    w = q[:, 0]
+    xyz = q[:, 1:]
+    # angle via atan2 (smooth everywhere) instead of acos (grad = -1/sqrt(1-w^2) = nan at
+    # w=+-1, i.e. identity rotation -> rest pose). sin_half has +eps so it is never 0.
+    sin_half = torch.sqrt((xyz * xyz).sum(-1) + 1e-12)
+    angle = 2.0 * torch.atan2(sin_half, w)
+    axis = xyz / sin_half.unsqueeze(-1)
     aa = axis * angle.unsqueeze(-1)
-    aa = torch.where(small.unsqueeze(-1), torch.zeros_like(aa), aa)
     return aa.reshape(*shape, 3)
 
 

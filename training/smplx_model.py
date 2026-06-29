@@ -8,6 +8,8 @@ Mask-encoder architecture mirrors VGGT-S's `mask_downscaling`
 patch grid so the stride-2 conv lands exactly on the 37x37 grid.
 """
 import math
+import os
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -219,16 +221,22 @@ class ReferenceFusion(nn.Module):
 
 class SMPLXRegressionHead(nn.Module):
     """Decode the fused person token into SMPL-X params with Iterative Error Feedback
-    (IEF, HMR/SPIN-style). Starts from the REST pose (identity 6D rotations, betas=0,
-    transl=0) and predicts RESIDUALS conditioned on the current estimate, repeated
-    num_iter times. Rotations are 6D (Invariant #8); hands/face not regressed.
+    (IEF, HMR/SPIN-style). Starts from an INIT pose and predicts RESIDUALS conditioned
+    on the current estimate, repeated num_iter times. Rotations are 6D (Invariant #8);
+    hands/face not regressed.
+
+    The init pose is either:
+      * MEAN pose (HMR2/TRAM-style) loaded from `mean_params_path` (smpl_mean_params.npz),
+        which avoids the rotation singularity at identity and matches the data
+        distribution -> faster convergence; OR
+      * the REST pose (identity 6D rotations, betas=0, transl=0) when no path is given.
 
     x : [B, d_model] -> dict(global_orient_6d, body_pose_6d[21*6], betas, transl)
 
     num_iter=1 reduces to a single-shot regressor (equivalent to the old behaviour).
     """
     def __init__(self, d_model=512, num_body_joints=21, num_betas=16,
-                 num_iter=3, rest_pose_init=True):
+                 num_iter=3, rest_pose_init=True, mean_params_path=None):
         super().__init__()
         self.num_body_joints = num_body_joints
         self.num_betas = num_betas
@@ -246,18 +254,56 @@ class SMPLXRegressionHead(nn.Module):
         # embed the current params back into the token (IEF feedback)
         self.param_embed = nn.Linear(param_dim, d_model)
 
-        # REST-pose starting point: identity 6D per joint, betas=0, transl=0
-        id6 = torch.tensor([1., 0., 0., 0., 1., 0.])
-        init = torch.cat([id6, id6.repeat(num_body_joints),
-                          torch.zeros(num_betas), torch.zeros(3)])
+        # starting point for IEF: mean pose (if file given) else rest pose.
+        init = self._build_init_params(mean_params_path)
         self.register_buffer("init_params", init.view(1, -1))
 
         if rest_pose_init:
-            # zero-init residual heads -> first residual is 0 -> output starts AT rest
-            # pose, so loss_pose starts low instead of from random rotations.
+            # zero-init residual heads -> first residual is 0 -> output starts AT the
+            # init pose, so loss_pose starts low instead of from random rotations.
             for head in (self.global_orient, self.body_pose, self.betas, self.transl):
                 nn.init.zeros_(head.layers[-1].weight)
                 nn.init.zeros_(head.layers[-1].bias)
+
+    def _build_init_params(self, mean_params_path):
+        """Return the flat init param vector [g6 | body6*nbj | betas | transl(3)] in
+        THIS head's 6D convention (Zhou et al. / rotation_6d_to_matrix = first 2 rows)."""
+        nbj, nb = self.num_body_joints, self.num_betas
+        if mean_params_path and os.path.isfile(os.path.expanduser(mean_params_path)):
+            d = np.load(os.path.expanduser(mean_params_path))
+            # smpl_mean_params.npz: pose=(144,)=24*6 in HMR2/TRAM 6D convention
+            # (reshape (3,2) -> two COLUMNS); shape=(10,) mean betas.
+            pose = torch.tensor(np.asarray(d["pose"], dtype=np.float32)).reshape(-1, 6)  # (24,6)
+            shape = torch.tensor(np.asarray(d["shape"], dtype=np.float32)).reshape(-1)   # (10,)
+            R = self._hmr2_6d_to_matrix(pose)                # (24,3,3)
+            my6d = R[:, :2, :].reshape(-1, 6)                # (24,6) in our row convention
+            # SMPL(24) -> SMPL-X(22): joint0=global, joints1..nbj = body (drop SMPL hands 22,23)
+            global6 = my6d[0]
+            body6 = my6d[1:1 + nbj].reshape(-1)
+            betas = torch.zeros(nb)
+            m = min(nb, shape.numel())
+            betas[:m] = shape[:m]
+            print(f"[SMPLXRegressionHead] mean-pose init from {mean_params_path} "
+                  f"(global+{nbj} body joints, {m} mean betas)")
+            return torch.cat([global6, body6, betas, torch.zeros(3)])
+        if mean_params_path:
+            print(f"[SMPLXRegressionHead] mean_params_path '{mean_params_path}' not found; "
+                  f"falling back to REST-pose init")
+        # REST pose: identity 6D per joint, betas=0, transl=0
+        id6 = torch.tensor([1., 0., 0., 0., 1., 0.])
+        return torch.cat([id6, id6.repeat(nbj), torch.zeros(nb), torch.zeros(3)])
+
+    @staticmethod
+    def _hmr2_6d_to_matrix(d6):
+        """HMR2/TRAM 6D -> rotation matrix. Their convention reshapes the 6 numbers as
+        (3,2) so the two halves are the first two COLUMNS of R (differs from our Zhou
+        row-split rotation_6d_to_matrix). d6: (...,6) -> (...,3,3)."""
+        x = d6.reshape(*d6.shape[:-1], 3, 2)
+        a1, a2 = x[..., 0], x[..., 1]
+        b1 = F.normalize(a1, dim=-1)
+        b2 = F.normalize(a2 - (b1 * a2).sum(-1, keepdim=True) * b1, dim=-1)
+        b3 = torch.cross(b1, b2, dim=-1)
+        return torch.stack([b1, b2, b3], dim=-1)            # columns
 
     def forward(self, x: torch.Tensor) -> dict:
         B = x.shape[0]
