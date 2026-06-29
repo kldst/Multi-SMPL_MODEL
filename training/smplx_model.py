@@ -218,23 +218,59 @@ class ReferenceFusion(nn.Module):
 
 
 class SMPLXRegressionHead(nn.Module):
-    """Separate small MLPs decode the fused person token into SMPL-X params.
-    Rotations are 6D (Invariant #8). Hands/face not regressed (zeroed at decode).
+    """Decode the fused person token into SMPL-X params with Iterative Error Feedback
+    (IEF, HMR/SPIN-style). Starts from the REST pose (identity 6D rotations, betas=0,
+    transl=0) and predicts RESIDUALS conditioned on the current estimate, repeated
+    num_iter times. Rotations are 6D (Invariant #8); hands/face not regressed.
 
     x : [B, d_model] -> dict(global_orient_6d, body_pose_6d[21*6], betas, transl)
+
+    num_iter=1 reduces to a single-shot regressor (equivalent to the old behaviour).
     """
-    def __init__(self, d_model=512, num_body_joints=21, num_betas=16):
+    def __init__(self, d_model=512, num_body_joints=21, num_betas=16,
+                 num_iter=3, rest_pose_init=True):
         super().__init__()
         self.num_body_joints = num_body_joints
-        self.global_orient = MLP(d_model, d_model, 6, num_layers=2)
-        self.body_pose = MLP(d_model, d_model, num_body_joints * 6, num_layers=2)
+        self.num_betas = num_betas
+        self.num_iter = max(1, int(num_iter))
+        self.g_dim = 6
+        self.b_dim = num_body_joints * 6
+        param_dim = self.g_dim + self.b_dim + num_betas + 3
+        self.param_dim = param_dim
+
+        # residual MLPs (predict a delta each iteration)
+        self.global_orient = MLP(d_model, d_model, self.g_dim, num_layers=2)
+        self.body_pose = MLP(d_model, d_model, self.b_dim, num_layers=2)
         self.betas = MLP(d_model, d_model, num_betas, num_layers=2)
         self.transl = MLP(d_model, d_model, 3, num_layers=2)
+        # embed the current params back into the token (IEF feedback)
+        self.param_embed = nn.Linear(param_dim, d_model)
+
+        # REST-pose starting point: identity 6D per joint, betas=0, transl=0
+        id6 = torch.tensor([1., 0., 0., 0., 1., 0.])
+        init = torch.cat([id6, id6.repeat(num_body_joints),
+                          torch.zeros(num_betas), torch.zeros(3)])
+        self.register_buffer("init_params", init.view(1, -1))
+
+        if rest_pose_init:
+            # zero-init residual heads -> first residual is 0 -> output starts AT rest
+            # pose, so loss_pose starts low instead of from random rotations.
+            for head in (self.global_orient, self.body_pose, self.betas, self.transl):
+                nn.init.zeros_(head.layers[-1].weight)
+                nn.init.zeros_(head.layers[-1].bias)
 
     def forward(self, x: torch.Tensor) -> dict:
+        B = x.shape[0]
+        params = self.init_params.expand(B, -1).clone()        # [B, param_dim] rest pose
+        for _ in range(self.num_iter):
+            h = x + self.param_embed(params)                   # feed current estimate back
+            delta = torch.cat([self.global_orient(h), self.body_pose(h),
+                               self.betas(h), self.transl(h)], dim=-1)
+            params = params + delta                            # accumulate residual
+        g, b, nb = self.g_dim, self.b_dim, self.num_betas
         return {
-            "global_orient_6d": self.global_orient(x),         # [B,6]
-            "body_pose_6d": self.body_pose(x),                 # [B,21*6]
-            "betas": self.betas(x),                            # [B,num_betas]
-            "transl": self.transl(x),                          # [B,3]
+            "global_orient_6d": params[:, :g],
+            "body_pose_6d": params[:, g:g + b],
+            "betas": params[:, g + b:g + b + nb],
+            "transl": params[:, g + b + nb:],
         }

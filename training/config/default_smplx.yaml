@@ -28,6 +28,7 @@ model:
   n_landmarks: 512
   num_betas: 16
   num_body_joints: 21
+  reg_num_iter: 3             # IEF iterations in the SMPL-X head (1 = single-shot)
   load_pretrained: True       # load VGGT-1B weights into the encoder
   # Where to get the VGGT-1B weights. Priority: pretrained_path -> HF cache -> HF download.
   # On a new/offline platform, copy model.pt over and set its absolute path here.
@@ -76,11 +77,11 @@ optim:
           _target_: fvcore.common.param_scheduler.CompositeParamScheduler
           schedulers:
             - _target_: fvcore.common.param_scheduler.LinearParamScheduler
-              start_value: 1.0e-8
+              start_value: 1.0e-6
               end_value: 1.0e-4
             - _target_: fvcore.common.param_scheduler.CosineParamScheduler
               start_value: 1.0e-4
-              end_value: 1.0e-8
+              end_value: 1.0e-6
           lengths: [0.01, 0.99]
           interval_scaling: ['rescaled', 'rescaled']
     weight_decay:
